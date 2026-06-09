@@ -22,14 +22,15 @@ body {
   background-color: var(--bg-color);
   color: var(--text-main);
   font-family: var(--font-family);
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   background-image:
     radial-gradient(circle at 50% 0%,   rgba(0, 240, 255, 0.05) 0%, transparent 50%),
     radial-gradient(circle at 100% 100%, rgba(255, 0, 60, 0.05) 0%, transparent 50%);
 }
 
-#root { height: 100%; display: flex; flex-direction: column; }
+#root { min-height: 100vh; display: flex; flex-direction: column; }
 
 /* ── Glassmorphism ──────────────────────────────────────────────────────────── */
 .glass-panel {
@@ -46,7 +47,7 @@ body {
   display: grid;
   grid-template-columns: 1fr 390px;
   grid-template-rows: auto 1fr;
-  height: 100vh;
+  height: 100vh; /* STRICTLY 100vh so it never stretches! */
   padding: 16px;
   gap: 16px;
 }
@@ -115,6 +116,7 @@ body {
 .main-feed {
   position: relative; overflow: hidden;
   display: flex; justify-content: center; align-items: center;
+  min-height: 0;
 }
 .video-container {
   width: 100%; height: 100%;
@@ -234,6 +236,7 @@ body {
 .side-panel {
   display: flex; flex-direction: column;
   gap: 12px; height: 100%; overflow: hidden;
+  min-height: 0; /* Prevents CSS grid blowout */
 }
 
 /* Plates panel */
@@ -405,3 +408,62 @@ body {
   to   { transform: rotate(360deg); }
 }
 .spin-icon { animation: spin 1s linear infinite; display: inline-block; }
+
+/* ── Bottom Summary ─────────────────────────────────────────────────────────── */
+.bottom-summary {
+  grid-column: 1 / -1;
+  padding: 24px;
+  margin-top: 16px;
+  animation: slideIn 0.5s ease-out;
+}
+
+.summary-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--primary);
+  text-shadow: 0 0 8px var(--primary-glow);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.summary-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--panel-border);
+  padding: 16px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4), 0 0 8px var(--primary-glow);
+  border-color: rgba(0,240,255,0.4);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.type-Person { color: var(--success); }
+.type-Person-\(Helmet\) { color: var(--success); }
+.type-Person-\(No-Helmet\) { color: var(--danger); }
+.type-Vehicle { color: var(--blue); }
+
+.card-conf {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

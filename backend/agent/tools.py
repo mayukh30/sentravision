@@ -40,11 +40,15 @@ def query_events_by_sql(object_id: str = None, event_type: str = None):
         if event_type:
             query = query.filter(Event.event_type == event_type)
         
-        events = query.order_by(Event.timestamp.desc()).limit(10).all()
+        events = query.order_by(Event.id.asc()).limit(500).all()
         if not events:
             return "No matching events found."
         
-        return "\n".join([f"Time: {e.timestamp}, Type: {e.event_type}, Desc: {e.description}" for e in events])
+        result = []
+        for e in events:
+            v_time = (e.event_metadata or {}).get('video_time', 'unknown')
+            result.append(f"Time: {v_time}s, Type: {e.event_type}, Desc: {e.description}, Meta: {e.event_metadata}")
+        return "\n".join(result)
     finally:
         db.close()
 
@@ -81,3 +85,101 @@ def count_events(event_type: str = None, start_time_sec: float = None, end_time_
     finally:
         db.close()
 
+@tool
+def get_video_info():
+    """
+    Get the metadata of the currently analyzed video, such as resolution (width/height), FPS, and total frames.
+    Use this when the user asks about the video properties or resolution.
+    """
+    import os
+    import cv2
+    upload_dir = "uploads"
+    if not os.path.exists(upload_dir):
+        return "Uploads directory not found."
+    files = os.listdir(upload_dir)
+    if not files:
+        return "No video uploaded yet."
+    
+    vid_path = os.path.join(upload_dir, files[0])
+    cap = cv2.VideoCapture(vid_path)
+    if not cap.isOpened():
+        return "Failed to open the video file."
+        
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    
+    return f"Video Resolution: {width}x{height}, FPS: {fps:.1f}, Total Frames: {total_frames}"
+
+@tool
+def analyze_video_visually(query: str):
+    """
+    Use this tool when the user asks a visual question about the video that cannot be answered by SQL or counting events, 
+    such as identifying clothing colors (e.g. 'green tshirt', 'red car'), specific actions, or visual descriptions.
+    It samples frames from the video and uses a Vision AI model to answer.
+    """
+    import os
+    import cv2
+    import base64
+    from langchain_core.messages import HumanMessage
+    from langchain_groq import ChatGroq
+    from backend.core.config import settings
+    
+    upload_dir = "uploads"
+    if not os.path.exists(upload_dir):
+        return "Uploads directory not found."
+    files = os.listdir(upload_dir)
+    if not files:
+        return "No video uploaded yet."
+    
+    vid_path = os.path.join(upload_dir, files[0])
+    cap = cv2.VideoCapture(vid_path)
+    if not cap.isOpened():
+        return "Failed to open the video file."
+        
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Extract 5 evenly spaced frames
+    frames_to_extract = 5
+    step = max(1, total_frames // frames_to_extract)
+    
+    base64_frames = []
+    
+    for i in range(frames_to_extract):
+        frame_idx = min(i * step, total_frames - 1)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        # Resize frame to save tokens and avoid payload limits
+        frame = cv2.resize(frame, (640, 360))
+        _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        b64 = base64.b64encode(buffer).decode('utf-8')
+        base64_frames.append(b64)
+        
+    cap.release()
+    
+    if not base64_frames:
+        return "Failed to extract frames."
+        
+    # Use Llama 4 Scout Vision model
+    llm = ChatGroq(model_name="meta-llama/llama-4-scout-17b-16e-instruct", api_key=settings.GROQ_API_KEY)
+    
+    content = [{"type": "text", "text": f"You are a security analyst looking at {len(base64_frames)} sequential frames from a video feed. Answer the following question: {query}"}]
+    
+    for b64 in base64_frames:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+        })
+        
+    message = HumanMessage(content=content)
+    
+    try:
+        response = llm.invoke([message])
+        return response.content
+    except Exception as e:
+        return f"Vision analysis failed: {str(e)}"

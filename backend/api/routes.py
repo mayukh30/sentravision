@@ -140,43 +140,135 @@ def stop_stream(stream_id: int):
 
 @router.get("/reports/summary")
 def get_analysis_summary():
-    """Generates a post-analysis summary including time ranges where no helmet was detected."""
+    """Generates a comprehensive post-analysis summary."""
     db = SessionLocal()
     try:
-        events = db.query(Event).filter(Event.event_type == "no_helmet").order_by(Event.id.asc()).all()
+        events = db.query(Event).order_by(Event.id.asc()).all()
         
+        # ── Aggregate counters ──
+        total_persons = 0
+        total_helmets = 0
+        total_no_helmets = 0
+        vehicle_counts = {"car": 0, "motorcycle": 0, "bicycle": 0, "bus": 0, "truck": 0}
+        
+        # ── No-helmet time range tracking ──
         time_ranges = []
         current_range = None
         
+        # ── Per-entity tracking ──
+        detections = {}           # key: "ID_{obj_id}" -> {id, type, confidence}
+        no_helmet_persons = {}    # obj_id -> {video_time, confidence}
+        vehicle_plates = {}       # vehicle_obj_id -> plate_text
+        plate_to_vehicle = {}     # plate_text -> vehicle_obj_id
+        
         for ev in events:
             meta = ev.event_metadata or {}
-            v_time = meta.get("video_time")
-            if v_time is None:
-                continue
-                
-            if current_range is None:
-                current_range = {"start": v_time, "end": v_time}
-            else:
-                # If within 2 seconds of the last event, extend the range
-                if v_time - current_range["end"] <= 2.0:
-                    current_range["end"] = v_time
+            
+            # Count by event type
+            if ev.event_type == "person_detected":
+                total_persons += 1
+            elif ev.event_type == "helmet_on":
+                total_helmets += 1
+            elif ev.event_type == "no_helmet":
+                total_no_helmets += 1
+                v_time = meta.get("video_time")
+                no_helmet_persons[ev.object_id] = {
+                    "video_time": v_time,
+                    "confidence": meta.get("confidence", 0),
+                }
+                # Time range logic
+                if v_time is not None:
+                    if current_range is None:
+                        current_range = {"start": v_time, "end": v_time}
+                    else:
+                        if v_time - current_range["end"] <= 2.0:
+                            current_range["end"] = v_time
+                        else:
+                            time_ranges.append(current_range)
+                            current_range = {"start": v_time, "end": v_time}
+            elif ev.event_type == "vehicle_detected":
+                vtype = str(meta.get("vehicle_type", "car")).lower()
+                if vtype in vehicle_counts:
+                    vehicle_counts[vtype] += 1
+            elif ev.event_type == "license_plate":
+                plate_text = meta.get("plate", "")
+                vid = meta.get("vehicle_id")
+                if vid is not None:
+                    vehicle_plates[str(vid)] = plate_text
+                    plate_to_vehicle[plate_text] = str(vid)
+            
+            # All-detections map
+            if ev.event_type in ["person_detected", "vehicle_detected", "helmet_on", "no_helmet"]:
+                conf = meta.get("confidence", 0)
+                if ev.event_type == "vehicle_detected":
+                    obj_type = str(meta.get("vehicle_type", "vehicle")).capitalize()
+                elif ev.event_type in ["helmet_on", "no_helmet"]:
+                    obj_type = "Person (Helmet)" if ev.event_type == "helmet_on" else "Person (No Helmet)"
                 else:
-                    time_ranges.append(current_range)
-                    current_range = {"start": v_time, "end": v_time}
+                    obj_type = "Person"
                     
+                obj_id = ev.object_id
+                key = f"ID_{obj_id}"
+                
+                if key not in detections:
+                    detections[key] = {"id": obj_id, "type": obj_type, "confidence": conf}
+                else:
+                    if obj_type != "Person" and detections[key]["type"] == "Person":
+                        detections[key]["type"] = obj_type
+                    if conf > detections[key]["confidence"]:
+                        detections[key]["confidence"] = conf
+                        
         if current_range is not None:
             time_ranges.append(current_range)
             
-        # Format the ranges into strings
+        # ── Format time ranges ──
         formatted_ranges = []
         for r in time_ranges:
-            start_s = f"{r['start']:.1f}s"
-            end_s = f"{r['end']:.1f}s"
-            if r['start'] == r['end']:
+            start_s = f"{r['start']:.2f}s"
+            end_s = f"{r['end']:.2f}s"
+            if abs(r['start'] - r['end']) < 0.1:
                 formatted_ranges.append(start_s)
             else:
-                formatted_ranges.append(f"{start_s} - {end_s}")
+                formatted_ranges.append(f"{start_s} – {end_s}")
+        
+        # ── Build violation details (no-helmet + associated plate) ──
+        violations = []
+        for person_id, info in no_helmet_persons.items():
+            # Try to find a license plate associated with a nearby vehicle
+            # Strategy: check if any vehicle was detected, try to match plates
+            associated_plate = None
+            for vid, plate in vehicle_plates.items():
+                # Simple association: any plate found
+                associated_plate = plate
+                break  # Use first available plate (could be improved with spatial matching)
+            
+            v_time = info.get("video_time")
+            violations.append({
+                "person_id": person_id,
+                "time": f"{v_time:.2f}s" if v_time else "N/A",
+                "confidence": info.get("confidence", 0),
+                "license_plate": associated_plate if associated_plate else "Unable to read",
+            })
                 
-        return {"no_helmet_ranges": formatted_ranges}
+        all_detections = list(detections.values())
+        all_detections.sort(key=lambda x: int(x["id"]) if str(x["id"]).isdigit() else 0)
+                
+        return {
+            "stats": {
+                "total_persons": total_persons,
+                "total_helmets": total_helmets,
+                "total_no_helmets": total_no_helmets,
+                "total_cars": vehicle_counts.get("car", 0),
+                "total_motorcycles": vehicle_counts.get("motorcycle", 0),
+                "total_bicycles": vehicle_counts.get("bicycle", 0),
+                "total_buses": vehicle_counts.get("bus", 0),
+                "total_trucks": vehicle_counts.get("truck", 0),
+                "total_vehicles": sum(vehicle_counts.values()),
+                "total_plates_read": len(vehicle_plates),
+            },
+            "no_helmet_ranges": formatted_ranges,
+            "violations": violations,
+            "all_detections": all_detections,
+        }
     finally:
         db.close()

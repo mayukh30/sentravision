@@ -1,8 +1,67 @@
-.env
+# ── Python ──────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.whl
+*.pyo
+
+# ── Virtual Environments ────────────────────────────────────────────
+venv/
+env/
+.venv/
+.env
+
+# ── IDE / Editor ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── OS Files ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── YOLO Model Weights ─────────────────────────────────────────────
+*.pt
+*.onnx
+*.engine
+
+# ── Uploads & Generated Media ──────────────────────────────────────
 uploads/
+output/
+*.mp4
+*.avi
+*.mov
+
+# ── Database ────────────────────────────────────────────────────────
 *.db
+*.sqlite3
+
+# ── Node / Frontend ────────────────────────────────────────────────
 frontend/node_modules/
 frontend/dist/
-.DS_Store
+frontend/.env
+node_modules/
+
+# ── Logs ────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Misc ────────────────────────────────────────────────────────────
+.cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+SentraVision_Interview_QA.md

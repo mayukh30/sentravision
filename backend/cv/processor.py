@@ -48,6 +48,7 @@ class StreamProcessor:
         # Tracking bookkeeping
         self.tracked_persons  = set()          # person track IDs seen
         self.tracked_vehicles = {}             # track_id -> cls int
+        self.vehicle_plates   = {}             # track_id -> plate text
         self.track_lifespans  = {}             # track_id -> frames visible
         self.person_helmet_status = {}         # track_id -> "helmet"|"no_helmet"
         self.seen_plates = set()               # plate strings already logged
@@ -259,48 +260,63 @@ class StreamProcessor:
                                     f"{vname.capitalize()} #{tid} detected",
                                     {"vehicle_type": vname, "bbox": box.tolist(), "confidence": float(conf)})
 
-                # ── 2. Helmet detection – every 3rd frame on motorcycle riders ─────
-                if person_crops and motorcycle_boxes and frame_count % 3 == 0:
+                # ── 2. Helmet detection – every 2nd frame on/near motorcycle riders ─────
+                if person_crops and frame_count % 2 == 0:
                     hmodel = self._get_helmet_model()
                     if hmodel:
                         for tid, px1, py1, px2, py2 in person_crops:
                             if tid in self.person_helmet_status:
                                 continue   # already classified this person
-                                
-                            # Check overlap with any motorcycle
-                            overlaps_bike = False
+                            
+                            # Check if person is near any motorcycle (overlap OR proximity)
+                            near_bike = False
                             for mx1, my1, mx2, my2 in motorcycle_boxes:
+                                # Strict overlap check
                                 ix1 = max(px1, mx1)
                                 iy1 = max(py1, my1)
                                 ix2 = min(px2, mx2)
                                 iy2 = min(py2, my2)
                                 if ix2 > ix1 and iy2 > iy1:
-                                    overlaps_bike = True
+                                    near_bike = True
+                                    break
+                                # Proximity check: if person center is within expanded bike bbox
+                                pcx = (px1 + px2) / 2
+                                pcy = (py1 + py2) / 2
+                                margin_x = (mx2 - mx1) * 0.5
+                                margin_y = (my2 - my1) * 0.5
+                                if (mx1 - margin_x <= pcx <= mx2 + margin_x and
+                                    my1 - margin_y <= pcy <= my2 + margin_y):
+                                    near_bike = True
                                     break
                                     
-                            if not overlaps_bike:
-                                continue # Only check helmet if they overlap a motorcycle
+                            if not near_bike and motorcycle_boxes:
+                                continue  # Only skip if there ARE bikes but person is far from them
 
-                            # Crop upper half of person bounding box (head area)
-                            head_bottom = min(frame.shape[0], py1 + max(1, (py2 - py1) // 2))
+                            # If no motorcycles at all in scene, skip helmet detection
+                            if not motorcycle_boxes:
+                                continue
+
+                            # Crop upper 65% of person bounding box (head + shoulders)
+                            person_h = py2 - py1
+                            head_bottom = min(frame.shape[0], py1 + max(1, int(person_h * 0.65)))
                             crop = frame[max(0, py1):head_bottom, max(0, px1):min(frame.shape[1], px2)]
                             if crop.size == 0:
                                 continue
 
-                            h_res = hmodel(crop, verbose=False, conf=0.45)
+                            h_res = hmodel(crop, verbose=False, conf=0.30)
                             if h_res[0].boxes is not None and len(h_res[0].boxes):
                                 best  = max(h_res[0].boxes, key=lambda b: float(b.conf[0]))
                                 hcls  = int(best.cls[0])
                                 hconf = float(best.conf[0])
                                 # Model classes: 0: With Helmet, 1: Without Helmet
-                                if hcls == 0:
+                                if hcls == 0 and hconf >= 0.55:
                                     self.person_helmet_status[tid] = "helmet"
                                     self.helmet_count += 1
                                     self._log(db, redis_client,
                                         "helmet_on", tid,
                                         f"✅ Person #{tid} is wearing a helmet ({hconf:.0%})",
                                         {"confidence": hconf})
-                                else:
+                                elif hcls == 1 and hconf >= 0.35:
                                     self.person_helmet_status[tid] = "no_helmet"
                                     self.no_helmet_count += 1
                                     self._log(db, redis_client,
@@ -317,7 +333,7 @@ class StreamProcessor:
                         clses  = results[0].boxes.cls.int().cpu().tolist()
 
                         for box, tid, cls in zip(boxes, ids, clses):
-                            if cls not in VEHICLE_CLASSES:
+                            if cls not in VEHICLE_CLASSES or tid in self.vehicle_plates:
                                 continue
                             x1, y1, x2, y2 = map(int, box)
                             # Plate is always in the lower ~35% of the vehicle bbox
@@ -341,6 +357,7 @@ class StreamProcessor:
                                         and any(c.isdigit() for c in plate_text)
                                         and plate_text not in self.seen_plates):
                                     self.seen_plates.add(plate_text)
+                                    self.vehicle_plates[tid] = plate_text
                                     self.license_plates.append(plate_text)
                                     self._log(db, redis_client,
                                         "license_plate", plate_text,

@@ -1,13 +1,13 @@
 from langgraph.prebuilt import create_react_agent
 from langchain_groq import ChatGroq
-from backend.agent.tools import search_events_by_semantics, query_events_by_sql, count_events
+from backend.agent.tools import search_events_by_semantics, query_events_by_sql, count_events, get_video_info, analyze_video_visually
 from backend.core.config import settings
 
 def get_agent():
     # Initialize the LLM (Using Groq for fast, free inference)
     llm = ChatGroq(model_name="llama-3.1-8b-instant", api_key=settings.GROQ_API_KEY)
     
-    tools = [search_events_by_semantics, query_events_by_sql, count_events]
+    tools = [search_events_by_semantics, query_events_by_sql, count_events, get_video_info, analyze_video_visually]
     
     # Create the ReAct agent graph
     agent_executor = create_react_agent(llm, tools)

@@ -159,7 +159,8 @@ export default function App() {
   }, [isDone, report]);
 
   return (
-    <div className="app-container">
+    <div className="page-wrapper">
+      <div className="app-container">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="header glass-panel">
@@ -253,34 +254,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Post Analysis Panel Overlay */}
-          {isDone && report && (
-            <div className="report-overlay glass-panel">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', color: 'var(--primary)' }}>
-                <CheckCircle size={18} /> Analysis Summary
-              </h3>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                The video processing has completed successfully.
-              </p>
-              
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px', border: '1px solid var(--panel-border)' }}>
-                <h4 style={{ fontSize: '0.85rem', marginBottom: '8px', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <ShieldAlert size={14} /> No-Helmet Time Ranges
-                </h4>
-                {report.no_helmet_ranges && report.no_helmet_ranges.length > 0 ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                    {report.no_helmet_ranges.map((tr, i) => (
-                      <span key={i} style={{ background: 'rgba(255,68,68,0.15)', color: '#ff7777', padding: '3px 8px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600 }}>
-                        {tr}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✅ All detected riders wore helmets.</span>
-                )}
-              </div>
-            </div>
-          )}
 
         </div>
       </main>
@@ -320,7 +293,9 @@ export default function App() {
                   <div key={`${ev.id}-${i}`} className={`event-card ${cfg.cls}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span className={`event-title ${cfg.cls}`}>{cfg.emoji} {cfg.label}</span>
-                      <span className="event-time">{ev.time}</span>
+                      <span className="event-time">
+                        {ev.metadata?.video_time ? `${ev.metadata.video_time.toFixed(1)}s` : ev.time}
+                      </span>
                     </div>
                     <span style={{ fontSize: '0.83rem', color: 'var(--text-main)' }}>{ev.desc}</span>
                     {ev.metadata?.confidence != null && (
@@ -369,8 +344,133 @@ export default function App() {
             </button>
           </div>
         </div>
-
       </aside>
+    </div>
+
+      {/* ── Comprehensive Bottom Summary ────────────────────────────────────── */}
+      {isDone && report && (
+        <div className="bottom-summary glass-panel" style={{ margin: '0 16px 16px 16px' }}>
+          <h2 className="summary-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle size={28} /> Analysis Report
+          </h2>
+
+          {/* ── Aggregate Stats Row ── */}
+          {report.stats && (
+            <div className="stats-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '24px' }}>
+              {[
+                { label: 'Persons', value: report.stats.total_persons, icon: '👤', color: 'var(--primary)' },
+                { label: 'Helmets', value: report.stats.total_helmets, icon: '⛑️', color: 'var(--success)' },
+                { label: 'No Helmet', value: report.stats.total_no_helmets, icon: '🚨', color: 'var(--danger)' },
+                { label: 'Cars', value: report.stats.total_cars, icon: '🚗', color: 'var(--blue)' },
+                { label: 'Motorcycles', value: report.stats.total_motorcycles, icon: '🏍️', color: 'var(--warning)' },
+                { label: 'Vehicles', value: report.stats.total_vehicles, icon: '🚛', color: 'var(--text-muted)' },
+                { label: 'Plates Read', value: report.stats.total_plates_read, icon: '📋', color: 'var(--warning)' },
+              ].map((s, i) => (
+                <div key={i} style={{
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid var(--panel-border)',
+                  borderRadius: '12px', padding: '16px', textAlign: 'center',
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                }}>
+                  <div style={{ fontSize: '1.8rem', marginBottom: '4px' }}>{s.icon}</div>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 700, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── No-Helmet Time Ranges ── */}
+          <div style={{ background: 'rgba(255,255,255,0.05)', padding: '16px', borderRadius: '12px', border: '1px solid var(--panel-border)', marginBottom: '20px' }}>
+            <h4 style={{ fontSize: '1rem', marginBottom: '12px', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ShieldAlert size={18} /> No-Helmet Time Ranges
+            </h4>
+            {report.no_helmet_ranges && report.no_helmet_ranges.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {report.no_helmet_ranges.map((tr, i) => (
+                  <span key={`tr-${i}`} style={{ background: 'rgba(255,68,68,0.15)', color: '#ff7777', padding: '6px 12px', borderRadius: '6px', fontSize: '0.9rem', fontWeight: 600 }}>
+                    {tr}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span style={{ fontSize: '0.95rem', color: 'var(--success)' }}>✅ All detected riders wore helmets.</span>
+            )}
+          </div>
+
+          {/* ── Violations Table ── */}
+          {report.violations && report.violations.length > 0 && (
+            <div style={{ background: 'rgba(255,68,68,0.04)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,68,68,0.2)', marginBottom: '20px' }}>
+              <h4 style={{ fontSize: '1rem', marginBottom: '12px', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertTriangle size={18} /> Helmet Violations Detail
+              </h4>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--panel-border)', color: 'var(--text-muted)' }}>
+                      <th style={{ padding: '8px 12px', textAlign: 'left' }}>Person ID</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'left' }}>Time</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'left' }}>Confidence</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'left' }}>License Plate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.violations.map((v, i) => (
+                      <tr key={`v-${i}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '8px 12px', color: 'var(--danger)', fontWeight: 600 }}>#{v.person_id}</td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-main)' }}>{v.time}</td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <span style={{ color: v.confidence >= 0.5 ? 'var(--warning)' : 'var(--text-muted)', fontWeight: 600 }}>
+                            {(v.confidence * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td style={{ padding: '8px 12px' }}>
+                          {v.license_plate === 'Unable to read' ? (
+                            <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Unable to read</span>
+                          ) : (
+                            <span style={{ background: 'rgba(255,204,0,0.1)', color: 'var(--warning)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, fontFamily: 'monospace' }}>
+                              {v.license_plate}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── Tracked Entities Grid ── */}
+          {report.all_detections && report.all_detections.length > 0 && (
+            <>
+              <h3 style={{ marginBottom: '16px', color: 'var(--text-main)' }}>Tracked Entities</h3>
+              <div className="summary-grid">
+                {report.all_detections.map((obj, i) => {
+                  const clsType = obj.type.replace(/\s+/g, '-');
+                  return (
+                    <div key={`obj-${i}`} className="summary-card">
+                      <div className="card-header">
+                        <span className={`type-${clsType}`}>{obj.type}</span>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>ID #{obj.id}</span>
+                      </div>
+                      <div className="card-conf">
+                        <div>AI Confidence Score</div>
+                        <div className="conf-bar-wrap" style={{ marginTop: 0, height: '6px' }}>
+                          <div className="conf-bar-fill" style={{ width: `${(obj.confidence * 100).toFixed(0)}%` }} />
+                        </div>
+                        <div style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-main)' }}>
+                          {(obj.confidence * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }
