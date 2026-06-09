@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pinecone
+ultralytics
+opencv-python
+redis
+langchain
+langchain-community
+langgraph
+langchain-groq
+python-dotenv
+pydantic-settings
+sentence-transformers
+langchain-huggingface
+python-multipart 
