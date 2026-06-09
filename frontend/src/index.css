@@ -205,6 +205,31 @@ body {
   box-shadow: 0 0 8px var(--primary-glow);
 }
 
+/* ── Post-Analysis Report Overlay ───────────────────────────────────────────── */
+.report-overlay {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  max-width: 600px;
+  background: rgba(10, 10, 18, 0.9);
+  border: 1px solid var(--panel-border);
+  border-top-color: var(--primary);
+  border-top-width: 3px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  z-index: 20;
+  backdrop-filter: blur(15px);
+  animation: slideUpFade 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes slideUpFade {
+  0% { opacity: 0; transform: translate(-50%, 20px); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+
 /* ── Sidebar ────────────────────────────────────────────────────────────────── */
 .side-panel {
   display: flex; flex-direction: column;
@@ -310,8 +335,8 @@ body {
 
 /* ── Chat ───────────────────────────────────────────────────────────────────── */
 .chat-section {
-  height: 40%; display: flex; flex-direction: column;
-  padding: 14px; min-height: 0;
+  flex: 1; display: flex; flex-direction: column;
+  padding: 14px; min-height: 250px;
 }
 .chat-history {
   flex: 1; overflow-y: auto;

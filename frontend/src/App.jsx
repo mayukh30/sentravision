@@ -44,7 +44,10 @@ export default function App() {
   // Stream state
   const [streamId,    setStreamId]    = useState(null);
   const [streamStats, setStreamStats] = useState(null);
-  const [videoBlob,   setVideoBlob]   = useState(null);   // local blob URL
+  const [videoBlob,   setVideoBlob]   = useState(null);
+  
+  // Post-analysis report
+  const [report,      setReport]      = useState(null);   // local blob URL
 
   const messagesEndRef = useRef(null);
   const fileInputRef   = useRef(null);
@@ -89,6 +92,7 @@ export default function App() {
     // Instant local preview
     setVideoBlob(URL.createObjectURL(file));
     setStreamStats(null);
+    setReport(null);
     setUploading(true);
 
     const fd = new FormData();
@@ -143,6 +147,16 @@ export default function App() {
   const vc            = streamStats?.vehicle_counts  ?? {};
   const totalVehicles = streamStats?.total_vehicles  ?? 0;
   const plates        = streamStats?.license_plates  ?? [];
+
+  /* ── Fetch report when done ── */
+  useEffect(() => {
+    if (isDone && !report) {
+      fetch(`${API_BASE}/reports/summary`)
+        .then(r => r.json())
+        .then(d => setReport(d))
+        .catch(console.error);
+    }
+  }, [isDone, report]);
 
   return (
     <div className="app-container">
@@ -236,6 +250,35 @@ export default function App() {
               <p className="placeholder-sub">
                 Detects persons · helmets · vehicles · license plates
               </p>
+            </div>
+          )}
+
+          {/* Post Analysis Panel Overlay */}
+          {isDone && report && (
+            <div className="report-overlay glass-panel">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', color: 'var(--primary)' }}>
+                <CheckCircle size={18} /> Analysis Summary
+              </h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                The video processing has completed successfully.
+              </p>
+              
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px', border: '1px solid var(--panel-border)' }}>
+                <h4 style={{ fontSize: '0.85rem', marginBottom: '8px', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <ShieldAlert size={14} /> No-Helmet Time Ranges
+                </h4>
+                {report.no_helmet_ranges && report.no_helmet_ranges.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {report.no_helmet_ranges.map((tr, i) => (
+                      <span key={i} style={{ background: 'rgba(255,68,68,0.15)', color: '#ff7777', padding: '3px 8px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600 }}>
+                        {tr}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✅ All detected riders wore helmets.</span>
+                )}
+              </div>
             </div>
           )}
 

@@ -66,6 +66,11 @@ async def upload_video(file: UploadFile = File(...)):
     # Create a Stream row so events.stream_id FK is satisfied
     db = SessionLocal()
     try:
+        # Purge all existing events and streams to keep DB clean
+        db.query(Event).delete()
+        db.query(Stream).delete()
+        db.commit()
+
         stream = Stream(name=safe_name, source_url=file_path, status="active")
         db.add(stream)
         db.commit()
@@ -132,3 +137,46 @@ def stop_stream(stream_id: int):
         del active_processors[stream_id]
         return {"message": f"Stream {stream_id} stopped."}
     raise HTTPException(status_code=404, detail="Stream not running.")
+
+@router.get("/reports/summary")
+def get_analysis_summary():
+    """Generates a post-analysis summary including time ranges where no helmet was detected."""
+    db = SessionLocal()
+    try:
+        events = db.query(Event).filter(Event.event_type == "no_helmet").order_by(Event.id.asc()).all()
+        
+        time_ranges = []
+        current_range = None
+        
+        for ev in events:
+            meta = ev.event_metadata or {}
+            v_time = meta.get("video_time")
+            if v_time is None:
+                continue
+                
+            if current_range is None:
+                current_range = {"start": v_time, "end": v_time}
+            else:
+                # If within 2 seconds of the last event, extend the range
+                if v_time - current_range["end"] <= 2.0:
+                    current_range["end"] = v_time
+                else:
+                    time_ranges.append(current_range)
+                    current_range = {"start": v_time, "end": v_time}
+                    
+        if current_range is not None:
+            time_ranges.append(current_range)
+            
+        # Format the ranges into strings
+        formatted_ranges = []
+        for r in time_ranges:
+            start_s = f"{r['start']:.1f}s"
+            end_s = f"{r['end']:.1f}s"
+            if r['start'] == r['end']:
+                formatted_ranges.append(start_s)
+            else:
+                formatted_ranges.append(f"{start_s} - {end_s}")
+                
+        return {"no_helmet_ranges": formatted_ranges}
+    finally:
+        db.close()
