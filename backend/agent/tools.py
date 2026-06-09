@@ -47,3 +47,37 @@ def query_events_by_sql(object_id: str = None, event_type: str = None):
         return "\n".join([f"Time: {e.timestamp}, Type: {e.event_type}, Desc: {e.description}" for e in events])
     finally:
         db.close()
+
+@tool
+def count_events(event_type: str = None, start_time_sec: float = None, end_time_sec: float = None):
+    """
+    Count the number of events that match specific filters. 
+    Use this when the user asks "how many persons" or "how many helmets in the first 2 seconds".
+    event_type can be 'person_detected', 'vehicle_detected', 'helmet_on', 'no_helmet', 'license_plate'.
+    start_time_sec and end_time_sec allow filtering by video playback time in seconds (e.g. 0 to 2).
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(Event)
+        if event_type:
+            query = query.filter(Event.event_type == event_type)
+        
+        events = query.all()
+        count = 0
+        for e in events:
+            meta = e.event_metadata or {}
+            video_time = meta.get("video_time", -1.0)
+            
+            if start_time_sec is not None and video_time < start_time_sec:
+                continue
+            if end_time_sec is not None and video_time > end_time_sec:
+                continue
+                
+            count += 1
+            
+        if event_type:
+            return f"Found {count} events of type '{event_type}'."
+        return f"Found {count} total events."
+    finally:
+        db.close()
+

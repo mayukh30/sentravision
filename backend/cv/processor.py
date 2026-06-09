@@ -48,8 +48,11 @@ class StreamProcessor:
         # Tracking bookkeeping
         self.tracked_persons  = set()          # person track IDs seen
         self.tracked_vehicles = {}             # track_id -> cls int
+        self.track_lifespans  = {}             # track_id -> frames visible
         self.person_helmet_status = {}         # track_id -> "helmet"|"no_helmet"
         self.seen_plates = set()               # plate strings already logged
+        
+        self.video_fps = 0.0                   # actual fps of the source video
 
         # ── Real-time stats ──────────────────────────────────────────────────
         self.frames_processed = 0
@@ -71,7 +74,7 @@ class StreamProcessor:
             try:
                 from huggingface_hub import hf_hub_download
                 path = hf_hub_download(
-                    repo_id="keremberke/yolov8n-helmet-detection",
+                    repo_id="iam-tsr/yolov8n-helmet-detection",
                     filename="best.pt",
                 )
                 self._helmet_model = YOLO(path)
@@ -142,12 +145,17 @@ class StreamProcessor:
     def _log(self, db, redis_client, event_type, obj_id, desc, meta=None):
         """Persist event to Postgres and publish to Redis."""
         try:
+            m = meta or {}
+            # Inject video time if not present
+            if "video_time" not in m and self.video_fps > 0:
+                m["video_time"] = round(self.frames_processed / self.video_fps, 2)
+
             ev = Event(
                 stream_id=self.stream_id,
                 event_type=event_type,
                 object_id=str(obj_id),
                 description=desc,
-                event_metadata=meta or {},
+                event_metadata=m,
             )
             db.add(ev)
             db.commit()
@@ -176,6 +184,9 @@ class StreamProcessor:
             return
 
         self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.video_fps = cap.get(cv2.CAP_PROP_FPS)
+        if self.video_fps <= 0:
+            self.video_fps = 30.0
 
         db            = SessionLocal()
         redis_client  = get_redis_client()
@@ -208,6 +219,7 @@ class StreamProcessor:
                 )
 
                 person_crops = []   # [(track_id, x1, y1, x2, y2)]
+                motorcycle_boxes = [] # [(x1, y1, x2, y2)]
 
                 if results[0].boxes is not None and results[0].boxes.id is not None:
                     boxes  = results[0].boxes.xyxy.cpu().numpy()
@@ -217,39 +229,61 @@ class StreamProcessor:
 
                     for box, tid, cls, conf in zip(boxes, ids, clses, confs):
                         x1, y1, x2, y2 = map(int, box)
+                        
+                        # Increment lifespan
+                        self.track_lifespans[tid] = self.track_lifespans.get(tid, 0) + 1
+                        lifespan = self.track_lifespans[tid]
 
                         if cls == PERSON:
-                            if tid not in self.tracked_persons:
+                            if tid not in self.tracked_persons and lifespan == 10:
                                 self.tracked_persons.add(tid)
                                 self.persons_count = len(self.tracked_persons)
                                 self._log(db, redis_client,
                                     "person_detected", tid,
                                     f"Person #{tid} entered frame",
                                     {"bbox": box.tolist(), "confidence": float(conf)})
-                            # always collect for helmet check
+                            # Collect person crop for potential helmet checking
                             person_crops.append((tid, x1, y1, x2, y2))
 
-                        elif cls in VEHICLE_CLASSES and tid not in self.tracked_vehicles:
-                            self.tracked_vehicles[tid] = cls
-                            vname = CLASS_NAMES[cls]
-                            self.vehicle_counts[vname] += 1
-                            self.total_vehicles = sum(self.vehicle_counts.values())
-                            self._log(db, redis_client,
-                                "vehicle_detected", tid,
-                                f"{vname.capitalize()} #{tid} detected",
-                                {"vehicle_type": vname, "bbox": box.tolist(), "confidence": float(conf)})
+                        elif cls in VEHICLE_CLASSES:
+                            if cls == MOTORCYCLE:
+                                motorcycle_boxes.append((x1, y1, x2, y2))
+                            
+                            if tid not in self.tracked_vehicles and lifespan == 10:
+                                self.tracked_vehicles[tid] = cls
+                                vname = CLASS_NAMES[cls]
+                                self.vehicle_counts[vname] += 1
+                                self.total_vehicles = sum(self.vehicle_counts.values())
+                                self._log(db, redis_client,
+                                    "vehicle_detected", tid,
+                                    f"{vname.capitalize()} #{tid} detected",
+                                    {"vehicle_type": vname, "bbox": box.tolist(), "confidence": float(conf)})
 
-                # ── 2. Helmet detection – every 3rd frame on person crops ─────
-                if person_crops and frame_count % 3 == 0:
+                # ── 2. Helmet detection – every 3rd frame on motorcycle riders ─────
+                if person_crops and motorcycle_boxes and frame_count % 3 == 0:
                     hmodel = self._get_helmet_model()
                     if hmodel:
-                        for tid, x1, y1, x2, y2 in person_crops:
+                        for tid, px1, py1, px2, py2 in person_crops:
                             if tid in self.person_helmet_status:
                                 continue   # already classified this person
+                                
+                            # Check overlap with any motorcycle
+                            overlaps_bike = False
+                            for mx1, my1, mx2, my2 in motorcycle_boxes:
+                                ix1 = max(px1, mx1)
+                                iy1 = max(py1, my1)
+                                ix2 = min(px2, mx2)
+                                iy2 = min(py2, my2)
+                                if ix2 > ix1 and iy2 > iy1:
+                                    overlaps_bike = True
+                                    break
+                                    
+                            if not overlaps_bike:
+                                continue # Only check helmet if they overlap a motorcycle
 
                             # Crop upper half of person bounding box (head area)
-                            head_bottom = min(frame.shape[0], y1 + max(1, (y2 - y1) // 2))
-                            crop = frame[max(0, y1):head_bottom, max(0, x1):min(frame.shape[1], x2)]
+                            head_bottom = min(frame.shape[0], py1 + max(1, (py2 - py1) // 2))
+                            crop = frame[max(0, py1):head_bottom, max(0, px1):min(frame.shape[1], px2)]
                             if crop.size == 0:
                                 continue
 
@@ -258,15 +292,15 @@ class StreamProcessor:
                                 best  = max(h_res[0].boxes, key=lambda b: float(b.conf[0]))
                                 hcls  = int(best.cls[0])
                                 hconf = float(best.conf[0])
-
-                                if hcls == HELMET_ON:
+                                # Model classes: 0: With Helmet, 1: Without Helmet
+                                if hcls == 0:
                                     self.person_helmet_status[tid] = "helmet"
                                     self.helmet_count += 1
                                     self._log(db, redis_client,
                                         "helmet_on", tid,
                                         f"✅ Person #{tid} is wearing a helmet ({hconf:.0%})",
                                         {"confidence": hconf})
-                                else:   # NO_HELMET
+                                else:
                                     self.person_helmet_status[tid] = "no_helmet"
                                     self.no_helmet_count += 1
                                     self._log(db, redis_client,
