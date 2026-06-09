@@ -202,7 +202,7 @@ class StreamProcessor:
                     frame,
                     persist=True,
                     classes=DETECT_CLASSES,
-                    tracker="botsort.yaml",
+                    tracker="bytetrack.yaml",
                     verbose=False,
                     conf=0.35,
                 )

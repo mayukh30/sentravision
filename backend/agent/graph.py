@@ -5,7 +5,7 @@ from backend.core.config import settings
 
 def get_agent():
     # Initialize the LLM (Using Groq for fast, free inference)
-    llm = ChatGroq(model_name="llama-3.3-70b-versatile", api_key=settings.GROQ_API_KEY)
+    llm = ChatGroq(model_name="llama-3.1-8b-instant", api_key=settings.GROQ_API_KEY)
     
     tools = [search_events_by_semantics, query_events_by_sql]
     
