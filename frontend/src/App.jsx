@@ -7,7 +7,12 @@ import {
 } from 'lucide-react';
 import './index.css';
 
-const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:8000/api').replace(/\/+$/, '');
+let envBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
+envBase = envBase.replace(/\/+$/, '');
+if (!envBase.endsWith('/api')) {
+  envBase += '/api';
+}
+const API_BASE = envBase;
 
 /* ── Event type configuration ──────────────────────────────────────────────── */
 const EVT = {
