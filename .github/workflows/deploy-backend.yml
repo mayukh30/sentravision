@@ -29,7 +29,12 @@ jobs:
           # Create a fresh branch with only the necessary files for the backend
           git checkout --orphan hf-deployment
           git rm -rf .
-          git checkout main -- backend/ requirements.txt Dockerfile
+          git checkout main -- backend/ requirements.txt Dockerfile README.md
+          # Dynamically prepend Hugging Face config to README.md just for this deployment
+          echo -e "---\ntitle: SentraVision\nemoji: 🛡️\ncolorFrom: blue\ncolorTo: green\nsdk: docker\npinned: false\n---\n" > hf_readme_temp.md
+          cat README.md >> hf_readme_temp.md
+          mv hf_readme_temp.md README.md
+          git add README.md
           git commit -m "Deploy to Hugging Face Spaces"
           # Add remote and push ONLY this clean branch to HF's main branch
           git remote add hf https://huggingface.co/spaces/mayukh30/sentraVision
