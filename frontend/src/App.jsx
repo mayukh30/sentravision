@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import './index.css';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
 
 /* ── Event type configuration ──────────────────────────────────────────────── */
 const EVT = {
