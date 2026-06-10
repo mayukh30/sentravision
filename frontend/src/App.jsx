@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import './index.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
+const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:8000/api').replace(/\/+$/, '');
 
 /* ── Event type configuration ──────────────────────────────────────────────── */
 const EVT = {
@@ -102,14 +102,18 @@ export default function App() {
     fd.append('file', file);
     try {
       const r  = await fetch(`${API_BASE}/streams/upload`, { method: 'POST', body: fd });
+      if (!r.ok) {
+        const errText = await r.text();
+        throw new Error(`Upload Failed (${r.status}): ${errText}`);
+      }
       const d  = await r.json();
       setStreamId(d.stream_id);
       setMessages(prev => [...prev, {
         role: 'ai',
         content: `✅ "${file.name}" uploaded — Stream #${d.stream_id} started.\nDetecting persons · helmets · vehicles · license plates in real-time…`,
       }]);
-    } catch (_) {
-      setMessages(prev => [...prev, { role: 'ai', content: '❌ Upload failed. Is the backend running?' }]);
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'ai', content: `❌ Error: ${err.message}` }]);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
