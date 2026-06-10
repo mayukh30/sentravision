@@ -63,5 +63,11 @@ logs/
 .pytest_cache/
 htmlcov/
 .coverage
+.vercel/
+
+# ── Allow Specific Files ────────────────────────────────────────────
+# If you need the yolo weights to be deployed to Hugging Face Spaces via Git, 
+# we must explicitly un-ignore it (since *.pt is ignored above).
+!yolo11n.pt
 
 SentraVision_Interview_QA.md
