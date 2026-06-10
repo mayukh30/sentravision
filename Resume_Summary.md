@@ -1,16 +1,20 @@
 ### SentraVision — Agentic AI Video Surveillance & Security Platform
 
-**Tech Stack:** 
-- **Languages:** Python, JavaScript (ES6+), SQL
-- **AI/ML Models:** YOLO 11n (ByteTrack), YOLOv8n (Fine-tuned for helmets), EasyOCR, Llama 3.1 8B (Text LLM), Llama 4 Scout 17B (Vision LLM), HuggingFace MiniLM-L6-v2 (Embeddings)
-- **Backend:** FastAPI, Uvicorn, SQLAlchemy, LangGraph, LangChain, OpenCV
-- **Databases & Queues:** PostgreSQL (ACID event store), Redis (Pub/Sub), Pinecone (Vector DB)
-- **Frontend:** React 19, Vite 8, Glassmorphism UI, CSS Grid
+**Why this project is unique & how it helps:**
+Unlike traditional passive CCTV systems that just record video and dump logs, SentraVision transforms surveillance into an interactive, queryable AI assistant. It actively monitors footage to detect safety violations (like missing helmets) and license plates in real-time, saving hours of manual review. What makes it truly unique is the **Agentic AI** layer—security operators can simply type questions like *"How many people without helmets walked past cars?"* and the system autonomously reasons, retrieves the data, and synthesizes an answer.
 
-**Key Achievements:**
-- Developed a real-time, multi-model computer vision pipeline combining **YOLO 11n (ByteTrack)** for persistent person/vehicle tracking, a fine-tuned **YOLOv8n** for helmet compliance detection, and **EasyOCR** for automated license plate reading.
-- Architected an **Agentic AI Security Assistant** using the **ReAct pattern** via **LangGraph**, empowering users to query video footage in natural language instead of manually reviewing logs.
-- Engineered a dynamic tool selection system allowing the autonomous agent to orchestrate 5 specialized tools, including **Pinecone semantic vector search**, **PostgreSQL** structured queries, and temporal event aggregations.
-- Integrated a **Multimodal Vision Language Model (Llama 4 Scout 17B)** to process extracted video frames on-the-fly, enabling the agent to accurately answer abstract visual queries (e.g., clothing colors) unanswerable by standard databases.
-- Designed a high-performance backend using **FastAPI** with background multi-threading to ensure the CPU/GPU-bound CV pipeline processes frames continuously without blocking the asynchronous API event loop.
-- Implemented real-time, bidirectional system observability utilizing **Redis Pub/Sub** for sub-millisecond alert broadcasting alongside a modern, responsive **React 19** dashboard featuring a custom Glassmorphism aesthetic.
+**Technologies Used:**
+- **Languages:** Python, JavaScript (ES6+), SQL
+- **Computer Vision:** YOLOv11 (with ByteTrack multi-object tracking), YOLOv8n (Fine-tuned for helmet detection), EasyOCR, OpenCV
+- **Generative AI & LLMs:** Groq API, Llama 3.1 8B (Text LLM for reasoning), Llama 4 Scout 17B (Vision Language Model for multimodal frame analysis)
+- **NLP & Agentic AI:** LangGraph (ReAct agent architecture), LangChain (Tool orchestration), HuggingFace MiniLM-L6-v2 (Text embeddings for semantic search)
+- **Backend & APIs:** FastAPI, Uvicorn, SQLAlchemy
+- **Databases & Infrastructure:** PostgreSQL (ACID event store), Redis (Pub/Sub real-time broadcasting), Pinecone (Vector Database)
+- **Frontend:** React 19, Vite 8, CSS Glassmorphism Design System
+
+**Key Achievements & Impact:**
+- **Engineered an Agentic AI Security Assistant:** Utilized the **ReAct pattern** via **LangGraph** to build an autonomous agent that dynamically selects from 5 custom tools (SQL, Semantic Vector Search, Temporal Aggregation, Vision AI) to answer complex natural language security queries.
+- **Architected a Multi-Model CV Pipeline:** Developed a background-threaded **FastAPI** service running **YOLOv11**, **YOLOv8n**, and **EasyOCR** concurrently to detect persons, vehicles, license plates, and helmet compliance in real-time without blocking the API event loop.
+- **Implemented Multimodal Generative AI:** Integrated **Llama 4 Scout 17B** as a VLM tool, allowing the agent to extract and visually inspect video frames on-the-fly to answer abstract queries (e.g., *"Is anyone wearing a red shirt?"*) that structural databases cannot answer.
+- **Built Semantic Search Capabilities:** Leveraged **HuggingFace** NLP models to embed event descriptions into dense vectors, storing them in **Pinecone** to allow fuzzy semantic searching (RAG) of surveillance logs.
+- **Designed a High-Performance Real-Time Dashboard:** Created a stunning **React 19** frontend featuring a glassmorphism UI, connected to a **Redis Pub/Sub** architecture for sub-millisecond event broadcasting and live HUD stat updates.
