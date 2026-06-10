@@ -62,8 +62,11 @@ export default function App() {
     const id = setInterval(async () => {
       try {
         const r = await fetch(`${API_BASE}/events`);
+        if (!r.ok) return;
         const d = await r.json();
-        setEvents(d);
+        if (Array.isArray(d)) {
+          setEvents(d);
+        }
       } catch (_) {}
     }, 1500);
     return () => clearInterval(id);
