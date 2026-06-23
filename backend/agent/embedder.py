@@ -6,10 +6,10 @@ logger = logging.getLogger(__name__)
 
 embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-def embed_and_store_event(event_id: int, text: str):
+def embed_and_store_event(event_id: int, text: str, session_id: str = None):
     try:
         vector = embeddings_model.embed_query(text)
-        upsert_event_embedding(event_id, text, vector)
+        upsert_event_embedding(event_id, text, vector, session_id=session_id)
         logger.info(f"Successfully embedded and stored event {event_id}")
     except Exception as e:
         logger.error(f"Failed to embed and store event {event_id}: {e}")

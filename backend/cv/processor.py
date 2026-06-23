@@ -6,6 +6,7 @@ import json
 from backend.db.database import SessionLocal
 from backend.db.models import Event
 from backend.core.redis_client import get_redis_client
+from backend.agent.embedder import embed_and_store_event
 
 # ── COCO class IDs we care about ─────────────────────────────────────────────
 PERSON     = 0
@@ -29,10 +30,11 @@ NO_HELMET  = 1   # "NO-Hardhat"
 
 
 class StreamProcessor:
-    def __init__(self, stream_id: int, source_url: str):
+    def __init__(self, stream_id: int, source_url: str, session_id: str = None):
         self.stream_id   = stream_id
         self.source_url  = source_url
         self.file_path   = source_url
+        self.session_id  = session_id
 
         # Main detection model (loaded eagerly so it's ready right away)
         self.model = YOLO("yolo11n.pt")
@@ -114,6 +116,7 @@ class StreamProcessor:
             progress = min(100, round(self.frames_processed / self.total_frames * 100, 1))
         return {
             "stream_id":      self.stream_id,
+            "session_id":     self.session_id,
             "status":         self.status,
             "frames_processed": self.frames_processed,
             "total_frames":   self.total_frames,
@@ -144,7 +147,7 @@ class StreamProcessor:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _log(self, db, redis_client, event_type, obj_id, desc, meta=None):
-        """Persist event to Postgres and publish to Redis."""
+        """Persist event to Postgres, embed into Pinecone, and publish to Redis."""
         try:
             m = meta or {}
             # Inject video time if not present
@@ -161,10 +164,18 @@ class StreamProcessor:
             db.add(ev)
             db.commit()
             db.refresh(ev)
+
+            # Embed event into Pinecone for semantic search
+            try:
+                embed_and_store_event(ev.id, desc, session_id=self.session_id)
+            except Exception as embed_err:
+                print(f"Embedding error (non-fatal): {embed_err}")
+
             if redis_client:
                 redis_client.publish("alerts", json.dumps({
                     "event_id":    ev.id,
                     "stream_id":   self.stream_id,
+                    "session_id":  self.session_id,
                     "type":        event_type,
                     "description": desc,
                 }))

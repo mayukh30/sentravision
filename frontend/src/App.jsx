@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Shield, Activity, Terminal, Send, Upload,
   Users, Cpu, Zap, CheckCircle, Loader,
@@ -13,6 +13,16 @@ if (!envBase.endsWith('/api')) {
   envBase += '/api';
 }
 const API_BASE = envBase;
+
+/* ── Session ID (per tab, persisted in sessionStorage) ──────────────────────── */
+function getSessionId() {
+  let sid = sessionStorage.getItem('sentravision_session_id');
+  if (!sid) {
+    sid = crypto.randomUUID();
+    sessionStorage.setItem('sentravision_session_id', sid);
+  }
+  return sid;
+}
 
 /* ── Event type configuration ──────────────────────────────────────────────── */
 const EVT = {
@@ -37,6 +47,8 @@ function StatBadge({ icon: Icon, label, value, color = 'default' }) {
 
 /* ── Main App ───────────────────────────────────────────────────────────────── */
 export default function App() {
+  const sessionId = useMemo(() => getSessionId(), []);
+
   const [events,     setEvents]     = useState([]);
   const [messages,   setMessages]   = useState([{
     role: 'ai',
@@ -47,12 +59,12 @@ export default function App() {
   const [uploading,  setUploading]  = useState(false);
 
   // Stream state
-  const [streamId,    setStreamId]    = useState(null);
+  const [hasStream,   setHasStream]   = useState(false);
   const [streamStats, setStreamStats] = useState(null);
   const [videoBlob,   setVideoBlob]   = useState(null);
   
   // Post-analysis report
-  const [report,      setReport]      = useState(null);   // local blob URL
+  const [report,      setReport]      = useState(null);
 
   const messagesEndRef = useRef(null);
   const fileInputRef   = useRef(null);
@@ -62,11 +74,11 @@ export default function App() {
   }, []);
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
-  /* ── Poll events every 1.5 s ── */
+  /* ── Poll events every 1.5 s (session-scoped) ── */
   useEffect(() => {
     const id = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/events`);
+        const r = await fetch(`${API_BASE}/events?session_id=${sessionId}`);
         if (!r.ok) return;
         const d = await r.json();
         if (Array.isArray(d)) {
@@ -75,14 +87,14 @@ export default function App() {
       } catch (_) {}
     }, 1500);
     return () => clearInterval(id);
-  }, []);
+  }, [sessionId]);
 
-  /* ── Poll stream stats every 1 s ── */
+  /* ── Poll stream stats every 1 s (session-scoped) ── */
   useEffect(() => {
-    if (!streamId) return;
+    if (!hasStream) return;
     const id = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/streams/status/${streamId}`);
+        const r = await fetch(`${API_BASE}/streams/status?session_id=${sessionId}`);
         if (!r.ok) return;
         const d = await r.json();
         setStreamStats(d);
@@ -90,7 +102,7 @@ export default function App() {
       } catch (_) {}
     }, 1000);
     return () => clearInterval(id);
-  }, [streamId]);
+  }, [hasStream, sessionId]);
 
   /* ── File upload ── */
   const handleFileUpload = async (e) => {
@@ -105,6 +117,7 @@ export default function App() {
 
     const fd = new FormData();
     fd.append('file', file);
+    fd.append('session_id', sessionId);
     try {
       const r  = await fetch(`${API_BASE}/streams/upload`, { method: 'POST', body: fd });
       if (!r.ok) {
@@ -112,7 +125,7 @@ export default function App() {
         throw new Error(`Upload Failed (${r.status}): ${errText}`);
       }
       const d  = await r.json();
-      setStreamId(d.stream_id);
+      setHasStream(true);
       setMessages(prev => [...prev, {
         role: 'ai',
         content: `✅ "${file.name}" uploaded — Stream #${d.stream_id} started.\nDetecting persons · helmets · vehicles · license plates in real-time…`,
@@ -125,7 +138,7 @@ export default function App() {
     }
   };
 
-  /* ── Chat ── */
+  /* ── Chat (session-scoped) ── */
   const handleSend = async () => {
     if (!input.trim()) return;
     const msg = { role: 'user', content: input };
@@ -136,7 +149,7 @@ export default function App() {
       const r = await fetch(`${API_BASE}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: msg.content }),
+        body: JSON.stringify({ query: msg.content, session_id: sessionId }),
       });
       const d = await r.json();
       setMessages(p => [...p, { role: 'ai', content: d.response }]);
@@ -148,6 +161,7 @@ export default function App() {
   };
 
   /* ── Derived stats ── */
+  const isQueued      = streamStats?.status === 'queued';
   const isProcessing  = streamStats?.status === 'processing';
   const isDone        = streamStats?.status === 'done';
   const isError       = streamStats?.status === 'error';
@@ -160,15 +174,15 @@ export default function App() {
   const totalVehicles = streamStats?.total_vehicles  ?? 0;
   const plates        = streamStats?.license_plates  ?? [];
 
-  /* ── Fetch report when done ── */
+  /* ── Fetch report when done (session-scoped) ── */
   useEffect(() => {
     if (isDone && !report) {
-      fetch(`${API_BASE}/reports/summary`)
+      fetch(`${API_BASE}/reports/summary?session_id=${sessionId}`)
         .then(r => r.json())
         .then(d => setReport(d))
         .catch(console.error);
     }
-  }, [isDone, report]);
+  }, [isDone, report, sessionId]);
 
   return (
     <div className="page-wrapper">
@@ -182,8 +196,9 @@ export default function App() {
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {streamStats && (
-            <div className={`processing-pill ${isDone ? 'pill-done' : isError ? 'pill-error' : ''}`}>
-              {isProcessing ? <><Loader size={13} className="spin-icon" />Analyzing {progressPct}%</>
+            <div className={`processing-pill ${isDone ? 'pill-done' : isError ? 'pill-error' : isQueued ? 'pill-queued' : ''}`}>
+              {isQueued     ? <><Loader size={13} className="spin-icon" />Wait: ~{streamStats.position * 5} mins</>
+               : isProcessing ? <><Loader size={13} className="spin-icon" />Analyzing {progressPct}%</>
                : isDone     ? <><CheckCircle size={13} />Analysis Complete</>
                : isError    ? <>⚠️ Processing Error</>
                : null}
@@ -206,9 +221,9 @@ export default function App() {
 
           {/* Feed badge (top-left) */}
           <div className="feed-overlay">
-            <div className={`live-badge ${isProcessing ? 'badge-processing' : isDone ? 'badge-done' : ''}`}>
+            <div className={`live-badge ${isProcessing ? 'badge-processing' : isDone ? 'badge-done' : isQueued ? 'badge-queued' : ''}`}>
               <div className="live-dot" />
-              {isProcessing ? 'ANALYZING' : isDone ? 'DONE' : 'FEED'}
+              {isQueued ? `WAITING (~${streamStats.position * 5} MINS)` : isProcessing ? 'ANALYZING' : isDone ? 'DONE' : 'FEED'}
             </div>
           </div>
 

@@ -6,6 +6,7 @@ from datetime import datetime
 class Stream(Base):
     __tablename__ = "streams"
     id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True, nullable=True)  # Per-user session isolation
     name = Column(String, index=True)
     source_url = Column(String)  # RTSP URL or local file path
     status = Column(String, default="stopped") # active, stopped, error
