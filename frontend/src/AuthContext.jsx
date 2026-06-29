@@ -58,7 +58,12 @@ export function AuthProvider({ children }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, name }),
     });
-    const data = await r.json();
+    let data;
+    try {
+      data = await r.json();
+    } catch (err) {
+      throw new Error(`Server error (${r.status}): Failed to parse response.`);
+    }
     if (!r.ok) throw new Error(data.detail || 'Signup failed');
     setToken(data.token);
     setUser(data.user);
@@ -71,7 +76,12 @@ export function AuthProvider({ children }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const data = await r.json();
+    let data;
+    try {
+      data = await r.json();
+    } catch (err) {
+      throw new Error(`Server error (${r.status}): Failed to parse response.`);
+    }
     if (!r.ok) throw new Error(data.detail || 'Login failed');
     setToken(data.token);
     setUser(data.user);
@@ -84,7 +94,12 @@ export function AuthProvider({ children }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id_token: idToken }),
     });
-    const data = await r.json();
+    let data;
+    try {
+      data = await r.json();
+    } catch (err) {
+      throw new Error(`Server error (${r.status}): Failed to parse response.`);
+    }
     if (!r.ok) throw new Error(data.detail || 'Google login failed');
     setToken(data.token);
     setUser(data.user);

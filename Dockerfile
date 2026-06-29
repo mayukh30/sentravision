@@ -20,6 +20,7 @@ COPY . .
 EXPOSE 7860
 
 # Start Redis in the background, then start the RabbitMQ worker and FastAPI
-CMD service redis-server start && \
+CMD redis-server --port 6379 & \
     python -m backend.worker & \
     uvicorn backend.main:app --host 0.0.0.0 --port 7860
+
