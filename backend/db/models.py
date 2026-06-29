@@ -3,15 +3,29 @@ from sqlalchemy.orm import relationship
 from backend.db.database import Base
 from datetime import datetime
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=True)  # Null for Google-only users
+    auth_provider = Column(String, default="local")   # "local" or "google"
+    google_id = Column(String, unique=True, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    streams = relationship("Stream", back_populates="user")
+
 class Stream(Base):
     __tablename__ = "streams"
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, index=True, nullable=True)  # Per-user session isolation
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     name = Column(String, index=True)
     source_url = Column(String)  # RTSP URL or local file path
     status = Column(String, default="stopped") # active, stopped, error
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    user = relationship("User", back_populates="streams")
     events = relationship("Event", back_populates="stream")
 
 class Event(Base):

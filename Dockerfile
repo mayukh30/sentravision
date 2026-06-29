@@ -19,5 +19,7 @@ COPY . .
 # Expose the port that Hugging Face Spaces expects (7860)
 EXPOSE 7860
 
-# Start Redis in the background, then start FastAPI
-CMD service redis-server start && uvicorn backend.main:app --host 0.0.0.0 --port 7860
+# Start Redis in the background, then start the RabbitMQ worker and FastAPI
+CMD service redis-server start && \
+    python -m backend.worker & \
+    uvicorn backend.main:app --host 0.0.0.0 --port 7860

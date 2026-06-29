@@ -3,9 +3,12 @@ import {
   Shield, Activity, Terminal, Send, Upload,
   Users, Cpu, Zap, CheckCircle, Loader,
   ShieldCheck, ShieldAlert, Car, Truck,
-  CreditCard, AlertTriangle, Eye,
+  CreditCard, AlertTriangle, Eye, LogOut,
 } from 'lucide-react';
+import { useAuth } from './AuthContext';
+import LoginPage from './LoginPage';
 import './index.css';
+import './auth.css';
 
 let envBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
 envBase = envBase.replace(/\/+$/, '');
@@ -13,16 +16,6 @@ if (!envBase.endsWith('/api')) {
   envBase += '/api';
 }
 const API_BASE = envBase;
-
-/* ── Session ID (per tab, persisted in sessionStorage) ──────────────────────── */
-function getSessionId() {
-  let sid = sessionStorage.getItem('sentravision_session_id');
-  if (!sid) {
-    sid = crypto.randomUUID();
-    sessionStorage.setItem('sentravision_session_id', sid);
-  }
-  return sid;
-}
 
 /* ── Event type configuration ──────────────────────────────────────────────── */
 const EVT = {
@@ -47,12 +40,36 @@ function StatBadge({ icon: Icon, label, value, color = 'default' }) {
 
 /* ── Main App ───────────────────────────────────────────────────────────────── */
 export default function App() {
-  const sessionId = useMemo(() => getSessionId(), []);
+  const { user, token, isAuthenticated, loading: authLoading, logout, authFetch } = useAuth();
+
+  // Show loading screen while checking auth
+  if (authLoading) {
+    return (
+      <div className="auth-loading">
+        <Loader size={36} className="auth-loading-icon" />
+        <span className="auth-loading-text">Initializing SentraVision…</span>
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  // Render the main dashboard
+  return <Dashboard user={user} token={token} logout={logout} authFetch={authFetch} />;
+}
+
+/* ── Dashboard (the main app content, only shown when authenticated) ──────── */
+function Dashboard({ user, token, logout, authFetch }) {
+  // Use user.id as session identifier for consistent per-user scoping
+  const sessionId = useMemo(() => String(user?.id || ''), [user]);
 
   const [events,     setEvents]     = useState([]);
   const [messages,   setMessages]   = useState([{
     role: 'ai',
-    content: 'SentraVision AI online. I can detect persons, helmets, vehicles & license plates in real-time.',
+    content: `Welcome, ${user?.name || 'User'}! SentraVision AI online. I can detect persons, helmets, vehicles & license plates in real-time.`,
   }]);
   const [input,      setInput]      = useState('');
   const [loading,    setLoading]    = useState(false);
@@ -74,11 +91,11 @@ export default function App() {
   }, []);
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
-  /* ── Poll events every 1.5 s (session-scoped) ── */
+  /* ── Poll events every 1.5 s (user-scoped) ── */
   useEffect(() => {
     const id = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/events?session_id=${sessionId}`);
+        const r = await authFetch(`${API_BASE}/events?session_id=${sessionId}`);
         if (!r.ok) return;
         const d = await r.json();
         if (Array.isArray(d)) {
@@ -87,14 +104,14 @@ export default function App() {
       } catch (_) {}
     }, 1500);
     return () => clearInterval(id);
-  }, [sessionId]);
+  }, [sessionId, authFetch]);
 
-  /* ── Poll stream stats every 1 s (session-scoped) ── */
+  /* ── Poll stream stats every 1 s (user-scoped) ── */
   useEffect(() => {
     if (!hasStream) return;
     const id = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/streams/status?session_id=${sessionId}`);
+        const r = await authFetch(`${API_BASE}/streams/status?session_id=${sessionId}`);
         if (!r.ok) return;
         const d = await r.json();
         setStreamStats(d);
@@ -102,7 +119,7 @@ export default function App() {
       } catch (_) {}
     }, 1000);
     return () => clearInterval(id);
-  }, [hasStream, sessionId]);
+  }, [hasStream, sessionId, authFetch]);
 
   /* ── File upload ── */
   const handleFileUpload = async (e) => {
@@ -119,7 +136,7 @@ export default function App() {
     fd.append('file', file);
     fd.append('session_id', sessionId);
     try {
-      const r  = await fetch(`${API_BASE}/streams/upload`, { method: 'POST', body: fd });
+      const r = await authFetch(`${API_BASE}/streams/upload`, { method: 'POST', body: fd });
       if (!r.ok) {
         const errText = await r.text();
         throw new Error(`Upload Failed (${r.status}): ${errText}`);
@@ -128,7 +145,7 @@ export default function App() {
       setHasStream(true);
       setMessages(prev => [...prev, {
         role: 'ai',
-        content: `✅ "${file.name}" uploaded — Stream #${d.stream_id} started.\nDetecting persons · helmets · vehicles · license plates in real-time…`,
+        content: `✅ "${file.name}" uploaded — Stream #${d.stream_id} queued for processing.\nDetecting persons · helmets · vehicles · license plates…`,
       }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'ai', content: `❌ Error: ${err.message}` }]);
@@ -138,7 +155,7 @@ export default function App() {
     }
   };
 
-  /* ── Chat (session-scoped) ── */
+  /* ── Chat (user-scoped) ── */
   const handleSend = async () => {
     if (!input.trim()) return;
     const msg = { role: 'user', content: input };
@@ -146,7 +163,7 @@ export default function App() {
     setInput('');
     setLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/query`, {
+      const r = await authFetch(`${API_BASE}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: msg.content, session_id: sessionId }),
@@ -174,15 +191,23 @@ export default function App() {
   const totalVehicles = streamStats?.total_vehicles  ?? 0;
   const plates        = streamStats?.license_plates  ?? [];
 
-  /* ── Fetch report when done (session-scoped) ── */
+  /* ── Fetch report when done (user-scoped) ── */
   useEffect(() => {
     if (isDone && !report) {
-      fetch(`${API_BASE}/reports/summary?session_id=${sessionId}`)
+      authFetch(`${API_BASE}/reports/summary?session_id=${sessionId}`)
         .then(r => r.json())
         .then(d => setReport(d))
         .catch(console.error);
     }
-  }, [isDone, report, sessionId]);
+  }, [isDone, report, sessionId, authFetch]);
+
+  // Get user initials for avatar
+  const initials = (user?.name || user?.email || 'U')
+    .split(/[\s@]/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(s => s[0])
+    .join('');
 
   return (
     <div className="page-wrapper">
@@ -197,7 +222,7 @@ export default function App() {
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {streamStats && (
             <div className={`processing-pill ${isDone ? 'pill-done' : isError ? 'pill-error' : isQueued ? 'pill-queued' : ''}`}>
-              {isQueued     ? <><Loader size={13} className="spin-icon" />Wait: ~{streamStats.position * 5} mins</>
+              {isQueued     ? <><Loader size={13} className="spin-icon" />In Queue…</>
                : isProcessing ? <><Loader size={13} className="spin-icon" />Analyzing {progressPct}%</>
                : isDone     ? <><CheckCircle size={13} />Analysis Complete</>
                : isError    ? <>⚠️ Processing Error</>
@@ -211,7 +236,15 @@ export default function App() {
             <Upload size={15} />
             {uploading ? 'Uploading…' : 'Upload Video'}
           </button>
-          <span className="sys-status">SYSTEM: <span style={{ color: '#0f0' }}>OPTIMAL</span></span>
+          {/* User badge */}
+          <div className="user-badge">
+            <div className="user-avatar">{initials}</div>
+            <span className="user-name">{user?.name || user?.email}</span>
+          </div>
+          <button className="logout-btn" onClick={logout}>
+            <LogOut size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+            Logout
+          </button>
         </div>
       </header>
 
@@ -223,7 +256,7 @@ export default function App() {
           <div className="feed-overlay">
             <div className={`live-badge ${isProcessing ? 'badge-processing' : isDone ? 'badge-done' : isQueued ? 'badge-queued' : ''}`}>
               <div className="live-dot" />
-              {isQueued ? `WAITING (~${streamStats.position * 5} MINS)` : isProcessing ? 'ANALYZING' : isDone ? 'DONE' : 'FEED'}
+              {isQueued ? 'QUEUED' : isProcessing ? 'ANALYZING' : isDone ? 'DONE' : 'FEED'}
             </div>
           </div>
 

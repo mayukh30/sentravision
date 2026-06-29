@@ -14,4 +14,9 @@ python-dotenv
 pydantic-settings
 sentence-transformers
 langchain-huggingface
-python-multipart 
+python-multipart
+pika
+python-jose[cryptography]
+passlib[bcrypt]
+google-auth
+google-auth-httplib2

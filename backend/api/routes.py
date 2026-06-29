@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from backend.agent.graph import run_query
@@ -6,10 +6,14 @@ from backend.cv.processor import StreamProcessor
 from backend.db.database import SessionLocal
 from backend.db.models import Event, Stream
 from backend.db.pinecone_client import delete_session_embeddings
+from backend.core.auth import get_current_user_id, get_optional_user_id
+from backend.core.rabbitmq_client import publish_video_task
 import shutil
 import os
-import threading
-import time
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -17,60 +21,8 @@ class QueryRequest(BaseModel):
     query: str
     session_id: str = None
 
-# ── Processors keyed by session_id for multi-user isolation ───────────────────
-active_processors: dict[str, StreamProcessor] = {}
-
-# ── Queue State ───────────────────────────────────────────────────────────────
-queued_sessions: list[str] = []
-queue_lock = threading.Lock()
-processing_session: str = None
-
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# ── Background Worker Thread ──────────────────────────────────────────────────
-def process_queue_worker():
-    global processing_session
-    while True:
-        session_to_process = None
-        
-        # 1. Check if the current processor is done or errored
-        if processing_session:
-            proc = active_processors.get(processing_session)
-            if proc and proc.status in ("done", "error", "stopped"):
-                with queue_lock:
-                    processing_session = None
-            elif not proc:
-                with queue_lock:
-                    processing_session = None
-
-        # 2. Pick up the next job if idle
-        with queue_lock:
-            if processing_session is None and len(queued_sessions) > 0:
-                session_to_process = queued_sessions.pop(0)
-                processing_session = session_to_process
-
-        # 3. Start processing
-        if session_to_process:
-            db = SessionLocal()
-            try:
-                stream = db.query(Stream).filter(Stream.session_id == session_to_process).order_by(Stream.id.desc()).first()
-                if stream:
-                    processor = StreamProcessor(stream.id, stream.source_url, session_id=session_to_process)
-                    processor.start()
-                    active_processors[session_to_process] = processor
-            except Exception as e:
-                print(f"Failed to start queue job for {session_to_process}: {e}")
-                with queue_lock:
-                    processing_session = None
-            finally:
-                db.close()
-        
-        time.sleep(1)
-
-# Start the worker thread on import
-worker_thread = threading.Thread(target=process_queue_worker, daemon=True)
-worker_thread.start()
 
 
 @router.get("/health")
@@ -79,21 +31,24 @@ def health_check():
 
 
 @router.post("/query")
-def ask_agent(request: QueryRequest):
+def ask_agent(request: QueryRequest, user_id: int = Depends(get_current_user_id)):
     try:
-        response = run_query(request.query, session_id=request.session_id)
+        # Use user_id as session_id for consistent scoping
+        session_id = str(user_id)
+        response = run_query(request.query, session_id=session_id)
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/events")
-def get_events(limit: int = 20, session_id: str = Query(None)):
+def get_events(limit: int = 20, session_id: str = Query(None), user_id: int = Depends(get_current_user_id)):
     db = SessionLocal()
     try:
+        # Always scope to authenticated user
+        sid = str(user_id)
         query = db.query(Event).join(Stream, Event.stream_id == Stream.id)
-        if session_id:
-            query = query.filter(Stream.session_id == session_id)
+        query = query.filter(Stream.session_id == sid)
         events = query.order_by(Event.timestamp.desc()).limit(limit).all()
         return [
             {
@@ -137,22 +92,20 @@ def cleanup_global_db(db):
 
 
 @router.post("/streams/upload")
-def upload_video(file: UploadFile = File(...), session_id: str = Form(None)):
-    """Save the uploaded video, create DB record, and add to the background processing queue."""
-    if not session_id:
-        import uuid
-        session_id = str(uuid.uuid4())
+def upload_video(
+    file: UploadFile = File(...),
+    session_id: str = Form(None),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Save the uploaded video, create DB record, and publish to RabbitMQ for processing."""
+    # Use user_id as the session_id for per-user isolation
+    session_id = str(user_id)
 
-    # Stop any existing processor for this session if it's currently running
-    if session_id in active_processors:
-        active_processors[session_id].stop()
-        del active_processors[session_id]
-
-    # Create per-session upload directory
+    # Create per-user upload directory
     session_upload_dir = os.path.join(UPLOAD_DIR, session_id)
     os.makedirs(session_upload_dir, exist_ok=True)
 
-    # Clear any existing files in this session's upload dir
+    # Clear any existing files in this user's upload dir
     for old_file in os.listdir(session_upload_dir):
         old_path = os.path.join(session_upload_dir, old_file)
         if os.path.isfile(old_path):
@@ -165,16 +118,30 @@ def upload_video(file: UploadFile = File(...), session_id: str = Form(None)):
 
     db = SessionLocal()
     try:
-        # 1. Clean up old data for THIS session only
+        # 1. Clean up old data for THIS user only
         old_streams = db.query(Stream).filter(Stream.session_id == session_id).all()
         for s in old_streams:
             db.query(Event).filter(Event.stream_id == s.id).delete()
         db.query(Stream).filter(Stream.session_id == session_id).delete()
         db.commit()
 
-        # Clean up old Pinecone embeddings for this session
+        # Clean up old Pinecone embeddings for this user
         try:
             delete_session_embeddings(session_id)
+        except Exception:
+            pass
+
+        # Clean up fallback status and stop files
+        try:
+            status_file = os.path.join(UPLOAD_DIR, f"status_{session_id}.json")
+            if os.path.exists(status_file):
+                os.remove(status_file)
+        except Exception:
+            pass
+        try:
+            stop_file = os.path.join(UPLOAD_DIR, f"stop_{session_id}")
+            if os.path.exists(stop_file):
+                os.remove(stop_file)
         except Exception:
             pass
 
@@ -182,7 +149,13 @@ def upload_video(file: UploadFile = File(...), session_id: str = Form(None)):
         cleanup_global_db(db)
 
         # 3. Create new stream record
-        stream = Stream(name=safe_name, source_url=file_path, status="queued", session_id=session_id)
+        stream = Stream(
+            name=safe_name,
+            source_url=file_path,
+            status="queued",
+            session_id=session_id,
+            user_id=user_id,
+        )
         db.add(stream)
         db.commit()
         db.refresh(stream)
@@ -190,34 +163,37 @@ def upload_video(file: UploadFile = File(...), session_id: str = Form(None)):
     finally:
         db.close()
 
-    # Add to background queue instead of starting immediately
-    with queue_lock:
-        if session_id in queued_sessions:
-            queued_sessions.remove(session_id) # move to back if already queued
-        
-        global processing_session
-        if processing_session == session_id:
-            # If they were processing, stop them and push to queue
-            processing_session = None
-
-        queued_sessions.append(session_id)
-        pos = queued_sessions.index(session_id) + 1
+    # 4. Publish task to RabbitMQ instead of in-memory queue
+    try:
+        publish_video_task({
+            "stream_id": stream_id,
+            "source_url": file_path,
+            "session_id": session_id,
+            "user_id": user_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to publish to RabbitMQ, falling back: {e}")
+        # If RabbitMQ is down, process immediately in-thread as fallback
+        import threading
+        def fallback_process():
+            proc = StreamProcessor(stream_id, file_path, session_id=session_id)
+            proc.start()
+        threading.Thread(target=fallback_process, daemon=True).start()
 
     return {
-        "message": "Video uploaded and added to processing queue.",
+        "message": "Video uploaded and queued for processing.",
         "stream_id": stream_id,
         "session_id": session_id,
         "filename": safe_name,
         "status": "queued",
-        "position": pos
     }
 
 
 @router.get("/streams/video")
-def serve_video(session_id: str = Query(...)):
+def serve_video(session_id: str = Query(None), user_id: int = Depends(get_current_user_id)):
     """Serve the uploaded video file so the frontend can play it."""
-    # Even if queued, the file is saved in the session's upload dir
-    session_upload_dir = os.path.join(UPLOAD_DIR, session_id)
+    sid = session_id or str(user_id)
+    session_upload_dir = os.path.join(UPLOAD_DIR, sid)
     if not os.path.exists(session_upload_dir):
         raise HTTPException(status_code=404, detail="Video file not found.")
     
@@ -234,64 +210,107 @@ def serve_video(session_id: str = Query(...)):
 
 
 @router.get("/streams/status")
-def stream_status(session_id: str = Query(...)):
-    """Return real-time YOLO processing stats or queue position."""
-    # 1. Is it currently processing or done?
-    if session_id in active_processors:
-        return active_processors[session_id].get_stats()
-    
-    # 2. Is it in the queue?
-    with queue_lock:
-        if session_id in queued_sessions:
-            pos = queued_sessions.index(session_id) + 1
+def stream_status(session_id: str = Query(None), user_id: int = Depends(get_current_user_id)):
+    """Return real-time YOLO processing stats from Redis (set by worker)."""
+    sid = session_id or str(user_id)
+
+    # Check Redis for status published by the worker
+    from backend.core.redis_client import get_redis_client
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            status_data = redis_client.get(f"stream_status:{sid}")
+            if status_data:
+                return json.loads(status_data)
+        except Exception:
+            pass
+
+    # Fallback: Check local status file
+    try:
+        status_file = os.path.join(UPLOAD_DIR, f"status_{sid}.json")
+        if os.path.exists(status_file):
+            with open(status_file, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+
+    # Check DB for stream status
+    db = SessionLocal()
+    try:
+        stream = db.query(Stream).filter(Stream.session_id == sid).order_by(Stream.id.desc()).first()
+        if stream:
             return {
-                "session_id": session_id,
-                "status": "queued",
-                "position": pos,
-                "progress": 0,
-                "message": f"Waiting in queue... (Position: {pos})"
+                "session_id": sid,
+                "status": stream.status,
+                "progress": 0 if stream.status == "queued" else 100 if stream.status == "done" else 0,
+                "message": f"Status: {stream.status}",
             }
-            
-    # 3. Not found
+    finally:
+        db.close()
+
     raise HTTPException(status_code=404, detail="Stream not found.")
 
 
 @router.get("/streams/active")
-def list_active_streams(session_id: str = Query(None)):
-    """List stats for active/completed streams, optionally filtered by session."""
-    if session_id:
-        if session_id in active_processors:
-            return [active_processors[session_id].get_stats()]
-        return []
-    return [p.get_stats() for p in active_processors.values()]
+def list_active_streams(session_id: str = Query(None), user_id: int = Depends(get_current_user_id)):
+    """List stats for active/completed streams for the authenticated user."""
+    sid = session_id or str(user_id)
+
+    from backend.core.redis_client import get_redis_client
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            status_data = redis_client.get(f"stream_status:{sid}")
+            if status_data:
+                return [json.loads(status_data)]
+        except Exception:
+            pass
+
+    # Fallback: Check local status file
+    try:
+        status_file = os.path.join(UPLOAD_DIR, f"status_{sid}.json")
+        if os.path.exists(status_file):
+            with open(status_file, "r") as f:
+                return [json.load(f)]
+    except Exception:
+        pass
+
+    return []
 
 
 @router.post("/streams/stop")
-def stop_stream(session_id: str = Query(...)):
-    with queue_lock:
-        if session_id in queued_sessions:
-            queued_sessions.remove(session_id)
-            return {"message": f"Session {session_id} removed from queue."}
-            
-    if session_id in active_processors:
-        active_processors[session_id].stop()
-        del active_processors[session_id]
-        
-        global processing_session
-        if processing_session == session_id:
-            processing_session = None
-            
-        return {"message": f"Stream for session {session_id} stopped."}
-    raise HTTPException(status_code=404, detail="Stream not running.")
+def stop_stream(session_id: str = Query(None), user_id: int = Depends(get_current_user_id)):
+    sid = session_id or str(user_id)
+
+    # Set a stop signal in Redis that the worker checks
+    from backend.core.redis_client import get_redis_client
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            redis_client.set(f"stream_stop:{sid}", "1", ex=300)
+        except Exception:
+            pass
+
+    # Fallback stop file
+    try:
+        stop_file = os.path.join(UPLOAD_DIR, f"stop_{sid}")
+        with open(stop_file, "w") as f:
+            f.write("1")
+    except Exception:
+        pass
+
+    return {"message": f"Stop signal sent for session {sid}."}
+
 
 @router.get("/reports/summary")
-def get_analysis_summary(session_id: str = Query(None)):
-    """Generates a comprehensive post-analysis summary for a specific session."""
+def get_analysis_summary(session_id: str = Query(None), user_id: int = Depends(get_current_user_id)):
+    """Generates a comprehensive post-analysis summary for the authenticated user."""
+    sid = session_id or str(user_id)
+
     db = SessionLocal()
     try:
         query = db.query(Event).join(Stream, Event.stream_id == Stream.id)
-        if session_id:
-            query = query.filter(Stream.session_id == session_id)
+        query = query.filter(Stream.session_id == sid)
         events = query.order_by(Event.id.asc()).all()
         
         # ── Aggregate counters ──

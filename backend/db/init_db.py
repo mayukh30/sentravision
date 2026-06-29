@@ -1,5 +1,5 @@
 from backend.db.database import engine, Base
-from backend.db.models import Stream, Event
+from backend.db.models import User, Stream, Event
 
 def init_db():
     print("Creating database tables...")
