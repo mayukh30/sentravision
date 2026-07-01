@@ -131,6 +131,16 @@ def upload_video(
         except Exception:
             pass
 
+        # Clean up stale Redis status so frontend doesn't see old "done" data
+        try:
+            from backend.core.redis_client import get_redis_client
+            rc = get_redis_client()
+            if rc:
+                rc.delete(f"stream_status:{session_id}")
+                rc.delete(f"stream_stop:{session_id}")
+        except Exception:
+            pass
+
         # Clean up fallback status and stop files
         try:
             status_file = os.path.join(UPLOAD_DIR, f"status_{session_id}.json")

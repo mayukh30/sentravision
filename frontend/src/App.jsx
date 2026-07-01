@@ -77,6 +77,7 @@ function Dashboard({ user, token, logout, authFetch }) {
 
   // Stream state
   const [hasStream,   setHasStream]   = useState(false);
+  const [streamVersion, setStreamVersion] = useState(0);
   const [streamStats, setStreamStats] = useState(null);
   const [videoBlob,   setVideoBlob]   = useState(null);
   
@@ -119,17 +120,18 @@ function Dashboard({ user, token, logout, authFetch }) {
       } catch (_) {}
     }, 1000);
     return () => clearInterval(id);
-  }, [hasStream, sessionId, authFetch]);
+  }, [hasStream, streamVersion, sessionId, authFetch]);
 
   /* ── File upload ── */
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Instant local preview
+    // Instant local preview — reset all stream state for a fresh polling cycle
     setVideoBlob(URL.createObjectURL(file));
     setStreamStats(null);
     setReport(null);
+    setHasStream(false);
     setUploading(true);
 
     const fd = new FormData();
@@ -142,6 +144,7 @@ function Dashboard({ user, token, logout, authFetch }) {
         throw new Error(`Upload Failed (${r.status}): ${errText}`);
       }
       const d  = await r.json();
+      setStreamVersion(v => v + 1);
       setHasStream(true);
       setMessages(prev => [...prev, {
         role: 'ai',

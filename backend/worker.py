@@ -99,6 +99,32 @@ def process_video_task(task_data: dict):
     # Update DB status to processing
     update_stream_db_status(stream_id, "processing")
 
+    # Set initial Redis status so frontend sees "processing" immediately
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            redis_client.set(
+                f"stream_status:{session_id}",
+                json.dumps({
+                    "stream_id": stream_id,
+                    "session_id": session_id,
+                    "status": "processing",
+                    "progress": 0,
+                    "fps": 0,
+                    "persons_count": 0,
+                    "helmet_count": 0,
+                    "no_helmet_count": 0,
+                    "vehicle_counts": {"car": 0, "motorcycle": 0, "bicycle": 0, "bus": 0, "truck": 0},
+                    "total_vehicles": 0,
+                    "license_plates": [],
+                    "frames_processed": 0,
+                    "total_frames": 0,
+                }),
+                ex=600,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to set initial Redis status: {e}")
+
     # Create and start the processor
     processor = StreamProcessor(stream_id, source_url, session_id=session_id)
     processor.start()
